@@ -1,26 +1,30 @@
-import { Activity, CalendarDays, Dumbbell, Settings2, TrendingUp } from "lucide-react";
+import { CalendarDays, Dumbbell, Layers, TrendingUp } from "lucide-react";
 
 const NAV = [
-  ["summary", "Resumen", Activity],
-  ["register", "Registrar", Dumbbell],
-  ["history", "Historial", CalendarDays],
+  ["workout", "Entrenar", Dumbbell],
+  ["activity", "Actividad", CalendarDays],
   ["progress", "Progreso", TrendingUp],
-  ["more", "Más", Settings2],
+  ["catalog", "Catálogo", Layers],
 ];
 
-export default function BottomNav({ tab, sub, onSelect }) {
+export default function BottomNav({ tab, onSelect }) {
   return (
-    <nav>
-      {NAV.map(([id, label, Icon]) => (
-        <button
-          key={id}
-          className={tab === id && !sub ? "nav active" : "nav"}
-          onClick={() => onSelect(id)}
-        >
-          <Icon size={20} />
-          <span>{label}</span>
-        </button>
-      ))}
+    <nav role="navigation" aria-label="Navegación principal">
+      {NAV.map(([id, label, Icon]) => {
+        const isActive = tab === id;
+        return (
+          <button
+            key={id}
+            className={isActive ? "nav active" : "nav"}
+            onClick={() => onSelect(id)}
+            aria-selected={isActive}
+            aria-label={label}
+          >
+            <Icon size={19} strokeWidth={isActive ? 2.5 : 2} />
+            <span>{label}</span>
+          </button>
+        );
+      })}
     </nav>
   );
 }

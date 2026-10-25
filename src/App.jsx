@@ -1,46 +1,71 @@
 import { useEffect, useMemo, useState } from "react";
 import { useLocalStorage } from "./hooks/useLocalStorage";
-import { DEFAULT_EXERCISES } from "./lib/constants";
-import { epley, fmtShort, isoToday, shiftISO, uid, weekKey, sessionVolume } from "./lib/utils";
+import { DEFAULT_EXERCISES, DEFAULT_ROUTINES } from "./lib/constants";
+import {
+  epley,
+  fmtShort,
+  isoToday,
+  shiftISO,
+  uid,
+  weekKey,
+  sessionVolume,
+  convertWeight,
+} from "./lib/utils";
 
 import Header from "./components/Header";
 import Toast from "./components/Toast";
 import BottomNav from "./components/BottomNav";
 import RestTimerBar from "./components/RestTimerBar";
 
-import Summary from "./screens/Summary";
-import Register from "./screens/Register";
-import History from "./screens/History";
-import ProgressTab from "./screens/ProgressTab";
-import More from "./screens/More";
-import Goals from "./screens/Goals";
-import CalendarView from "./screens/CalendarView";
-import Records from "./screens/Records";
-import Weight from "./screens/Weight";
-import DataTools from "./screens/DataTools";
-import PlateCalculator from "./screens/PlateCalculator";
+import WorkoutTab from "./screens/WorkoutTab";
+import ActivityTab from "./screens/ActivityTab";
+import ProgressHubTab from "./screens/ProgressHubTab";
+import CatalogAndDataTab from "./screens/CatalogAndDataTab";
 
 export default function App() {
   const [exercises, setExercises] = useLocalStorage("iron_exercises", DEFAULT_EXERCISES);
   const [logs, setLogs] = useLocalStorage("iron_logs", []);
   const [goals, setGoals] = useLocalStorage("iron_goals", []);
   const [weights, setWeights] = useLocalStorage("iron_weights", []);
+  const [theme, setTheme] = useLocalStorage("iron_theme", "dark");
+  const [unitPref, setUnitPref] = useLocalStorage("iron_unit_pref", "kg"); // "kg" | "lbs"
+  const [routines, setRoutines] = useLocalStorage("iron_routines", DEFAULT_ROUTINES);
 
-  const [tab, setTab] = useState("summary");
-  const [sub, setSub] = useState(null);
+  // Active routine context being run in WorkoutTab
+  const [activeRoutine, setActiveRoutine] = useState(null);
+
+  // Primary navigation tab: "workout" | "activity" | "progress" | "catalog"
+  const [tab, setTab] = useState("workout");
   const [toast, setToast] = useState("");
-
   const [timer, setTimer] = useState({ duration: 0, remaining: 0, running: false });
 
-  // ---- derived data ----------------------------------------------------
+  // Sync theme with document root & browser theme-color meta
+  useEffect(() => {
+    document.documentElement.setAttribute("data-theme", theme);
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) {
+      meta.setAttribute("content", theme === "light" ? "#f8fafc" : "#080a10");
+    }
+  }, [theme]);
+
+  // ---- derived metrics (unit aware) --------------------------------------
 
   const records = useMemo(() => {
     const out = {};
+    const exMap = new Map(exercises.map((e) => [e.id, e]));
+
     for (const log of logs) {
+      const ex = exMap.get(log.exerciseId);
+      const defaultUnit = ex?.unit || "kg";
+
       for (const s of log.sets) {
-        const w = Number(s.weight);
+        const rawW = Number(s.weight);
         const r = Number(s.reps);
-        if (!w || !r) continue;
+        if (!rawW || !r) continue;
+
+        const setUnit = s.unit || defaultUnit;
+        // Normalize to exercise native unit for PR comparison
+        const w = convertWeight(rawW, setUnit, defaultUnit);
 
         const item = out[log.exerciseId] || {
           maxWeight: 0,
@@ -48,6 +73,7 @@ export default function App() {
           est1RM: 0,
           weightForMax: 0,
           repsForMax: 0,
+          unit: defaultUnit,
           date: "",
         };
 
@@ -71,7 +97,7 @@ export default function App() {
       }
     }
     return out;
-  }, [logs]);
+  }, [logs, exercises]);
 
   const streak = useMemo(() => {
     if (!logs.length) return 0;
@@ -90,30 +116,34 @@ export default function App() {
 
   const weeklyVolume = useMemo(() => {
     const map = {};
+    const exMap = new Map(exercises.map((e) => [e.id, e]));
+
     logs.forEach((l) => {
       const w = weekKey(l.date);
-      map[w] = (map[w] || 0) + sessionVolume(l);
+      const ex = exMap.get(l.exerciseId);
+      const defUnit = ex?.unit || "kg";
+      map[w] = (map[w] || 0) + sessionVolume(l, unitPref, defUnit);
     });
 
     return Array.from({ length: 8 }, (_, i) => {
       const wk = shiftISO(currentWeek, -7 * (7 - i));
       return { week: wk, label: fmtShort(wk), volume: Math.round(map[wk] || 0) };
     });
-  }, [logs, currentWeek]);
+  }, [logs, exercises, currentWeek, unitPref]);
 
   const thisWeek = weeklyVolume[7]?.volume || 0;
   const lastWeek = weeklyVolume[6]?.volume || 0;
   const volDelta = lastWeek ? Math.round(((thisWeek - lastWeek) / lastWeek) * 100) : null;
 
-  const totalVolume = logs.reduce((a, l) => a + sessionVolume(l), 0);
-  const totalSets = logs.reduce((a, l) => a + l.sets.length, 0);
+  const totalVolume = useMemo(() => {
+    const exMap = new Map(exercises.map((e) => [e.id, e]));
+    return logs.reduce((a, l) => {
+      const ex = exMap.get(l.exerciseId);
+      return a + sessionVolume(l, unitPref, ex?.unit || "kg");
+    }, 0);
+  }, [logs, exercises, unitPref]);
 
-  const recentPRs = useMemo(() => {
-    return Object.entries(records)
-      .map(([exerciseId, r]) => ({ exerciseId, ...r }))
-      .sort((a, b) => b.est1RM - a.est1RM)
-      .slice(0, 5);
-  }, [records]);
+  const totalSets = logs.reduce((a, l) => a + l.sets.length, 0);
 
   // ---- rest timer --------------------------------------------------------
 
@@ -146,31 +176,125 @@ export default function App() {
     setTimer({ duration: 0, remaining: 0, running: false });
   }
 
-  // ---- notifications ------------------------------------------------------
-
   function notify(msg) {
     setToast(msg);
-    setTimeout(() => setToast(""), 1800);
+    setTimeout(() => setToast(""), 2000);
   }
 
-  // ---- handlers passed down to screens ------------------------------------
+  // ---- Exercise Management (Create, Edit muscle groups, Toggle favorite) ----
 
-  function addExercise(name) {
-    if (!name || !name.trim()) return null;
-    const ex = { id: uid("ex"), name: name.trim(), group: "General" };
-    setExercises([...exercises, ex]);
-    return ex;
+  function handleSaveExercise(ex) {
+    const groups =
+      Array.isArray(ex.groups) && ex.groups.length > 0
+        ? ex.groups
+        : ex.group
+        ? [ex.group]
+        : ["General"];
+    const unit = ex.unit === "lbs" ? "lbs" : "kg";
+
+    if (ex.id) {
+      setExercises((prev) =>
+        prev.map((item) =>
+          item.id === ex.id
+            ? {
+                ...item,
+                name: ex.name,
+                groups,
+                group: groups[0] || "General",
+                favorite: ex.favorite,
+                unit,
+              }
+            : item
+        )
+      );
+      notify("Ejercicio actualizado");
+    } else {
+      const newEx = {
+        id: uid("ex"),
+        name: ex.name,
+        groups,
+        group: groups[0] || "General",
+        favorite: Boolean(ex.favorite),
+        unit,
+      };
+      setExercises((prev) => [...prev, newEx]);
+      notify("Ejercicio creado");
+      return newEx;
+    }
   }
+
+  function handleToggleFavorite(id) {
+    setExercises((prev) =>
+      prev.map((e) => (e.id === id ? { ...e, favorite: !e.favorite } : e))
+    );
+  }
+
+  // ---- Routine Management -------------------------------------------------
+
+  function handleSaveRoutine(rt) {
+    if (routines.some((r) => r.id === rt.id)) {
+      setRoutines(routines.map((r) => (r.id === rt.id ? rt : r)));
+      notify("Rutina actualizada");
+    } else {
+      setRoutines([...routines, rt]);
+      notify("Rutina creada");
+    }
+  }
+
+  function handleDeleteRoutine(id) {
+    setRoutines(routines.filter((r) => r.id !== id));
+    notify("Rutina eliminada");
+  }
+
+  function handleDuplicateRoutine(id) {
+    const original = routines.find((r) => r.id === id);
+    if (!original) return;
+    const duplicated = {
+      ...original,
+      id: uid("rt"),
+      name: `${original.name} (copia)`,
+      exercises: original.exercises.map((e) => ({ ...e })),
+    };
+    setRoutines([...routines, duplicated]);
+    notify("Rutina duplicada");
+  }
+
+  function handleStartRoutine(routine) {
+    setActiveRoutine({
+      routineId: routine.id,
+      name: routine.name,
+      exercises: routine.exercises,
+      currentIndex: 0,
+    });
+    setTab("workout");
+    notify(`Iniciando rutina: ${routine.name}`);
+  }
+
+  function handleCancelRoutine() {
+    setActiveRoutine(null);
+    notify("Rutina finalizada");
+  }
+
+  // ---- Workouts, Goals, Weight & Data --------------------------------------
 
   function saveWorkout(exerciseId, date, rawSets) {
+    const ex = exercises.find((e) => e.id === exerciseId);
+    const defUnit = ex?.unit || "kg";
+
     const valid = rawSets
       .filter((s) => Number(s.weight) > 0 && Number(s.reps) > 0)
-      .map((s) => ({ weight: Number(s.weight), reps: Number(s.reps) }));
+      .map((s) => ({
+        weight: Number(s.weight),
+        reps: Number(s.reps),
+        unit: s.unit || defUnit,
+      }));
 
     if (!exerciseId || !valid.length) return false;
 
     const prev = records[exerciseId]?.est1RM || 0;
-    const best = Math.max(...valid.map((s) => epley(s.weight, s.reps)));
+    const best = Math.max(
+      ...valid.map((s) => epley(convertWeight(s.weight, s.unit, defUnit), s.reps))
+    );
 
     setLogs([{ id: uid("log"), exerciseId, date, sets: valid }, ...logs]);
     notify(best > prev && prev > 0 ? "🏆 NUEVO PR" : "Entrenamiento guardado");
@@ -188,7 +312,7 @@ export default function App() {
   }
 
   function addWeight(value) {
-    setWeights([{ id: uid("wt"), date: isoToday(), weight: value }, ...weights]);
+    setWeights([{ id: uid("wt"), date: isoToday(), weight: value, unit: unitPref }, ...weights]);
     notify("Peso registrado");
   }
 
@@ -200,25 +324,37 @@ export default function App() {
         exerciseId: g.exerciseId,
         targetWeight: Number(g.targetWeight),
         targetReps: Number(g.targetReps),
-        note: g.note,
+        unit: g.unit || unitPref || "kg",
+        note: g.note || "",
       },
       ...goals,
     ]);
-    notify("Objetivo creado");
+    notify("Objetivo fijado");
   }
 
   function removeGoal(id) {
     setGoals(goals.filter((g) => g.id !== id));
+    notify("Objetivo eliminado");
   }
 
   function exportData() {
-    const data = { version: 2, exportedAt: new Date().toISOString(), exercises, logs, goals, weights };
+    const data = {
+      version: 3,
+      exportedAt: new Date().toISOString(),
+      unitPref,
+      exercises,
+      routines,
+      logs,
+      goals,
+      weights,
+    };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
     a.download = `iron-log-backup-${isoToday()}.json`;
     a.click();
     URL.revokeObjectURL(a.href);
+    notify("Copia exportada");
   }
 
   function importData(e) {
@@ -228,7 +364,9 @@ export default function App() {
     reader.onload = () => {
       try {
         const d = JSON.parse(reader.result);
+        if (d.unitPref === "kg" || d.unitPref === "lbs") setUnitPref(d.unitPref);
         if (Array.isArray(d.exercises)) setExercises(d.exercises);
+        if (Array.isArray(d.routines)) setRoutines(d.routines);
         if (Array.isArray(d.logs)) setLogs(d.logs);
         if (Array.isArray(d.goals)) setGoals(d.goals);
         if (Array.isArray(d.weights)) setWeights(d.weights);
@@ -241,96 +379,95 @@ export default function App() {
     e.target.value = "";
   }
 
-  function goToSub(name) {
-    setSub(name);
-  }
-  function backFromSub() {
-    setSub(null);
-  }
-  function selectTab(id) {
-    setTab(id);
-    setSub(null);
-  }
-
-  // ---- routing -------------------------------------------------------------
-
-  let screen;
-  if (sub === "goals") {
-    screen = (
-      <Goals
-        exercises={exercises}
-        goals={goals}
-        records={records}
-        onAddGoal={addGoal}
-        onRemoveGoal={removeGoal}
-        onBack={backFromSub}
-      />
-    );
-  } else if (sub === "calendar") {
-    screen = <CalendarView logs={logs} streak={streak} onBack={backFromSub} />;
-  } else if (sub === "records") {
-    screen = <Records records={records} exercises={exercises} onBack={backFromSub} />;
-  } else if (sub === "weight") {
-    screen = <Weight weights={weights} onAddWeight={addWeight} onBack={backFromSub} />;
-  } else if (sub === "plates") {
-    screen = <PlateCalculator onBack={backFromSub} />;
-  } else if (sub === "data") {
-    screen = <DataTools onExport={exportData} onImport={importData} onBack={backFromSub} />;
-  } else if (tab === "summary") {
-    screen = (
-      <Summary
-        logs={logs}
-        streak={streak}
-        thisWeek={thisWeek}
-        weeklyVolume={weeklyVolume}
-        volDelta={volDelta}
-        totalVolume={totalVolume}
-        totalSets={totalSets}
-        latestWeight={weights[0]?.weight}
-        recentPRs={recentPRs}
-        exercises={exercises}
-        onGoToRegister={() => selectTab("register")}
-      />
-    );
-  } else if (tab === "register") {
-    screen = (
-      <Register
-        exercises={exercises}
-        logs={logs}
-        records={records}
-        onAddExercise={addExercise}
-        onSaveWorkout={saveWorkout}
-        onStartRest={startRest}
-      />
-    );
-  } else if (tab === "history") {
-    screen = (
-      <History logs={logs} exercises={exercises} onDeleteLog={deleteLog} onUpdateLog={updateLog} />
-    );
-  } else if (tab === "progress") {
-    screen = (
-      <ProgressTab
-        weeklyVolume={weeklyVolume}
-        goals={goals}
-        records={records}
-        exercises={exercises}
-        weights={weights}
-        onGoToSub={goToSub}
-      />
-    );
-  } else {
-    screen = <More onGoToSub={goToSub} />;
-  }
-
   return (
-    <div className="app">
-      <Header sessionCount={logs.length} />
+    <div className="app" data-theme={theme}>
+      <Header
+        sessionCount={logs.length}
+        theme={theme}
+        onToggleTheme={() => setTheme((t) => (t === "light" ? "dark" : "light"))}
+      />
       <Toast message={toast} />
-      <main>{screen}</main>
+
+      <main>
+        {tab === "workout" && (
+          <WorkoutTab
+            exercises={exercises}
+            logs={logs}
+            records={records}
+            unitPref={unitPref}
+            routines={routines}
+            activeRoutine={activeRoutine}
+            onStartRoutine={handleStartRoutine}
+            onCancelRoutine={handleCancelRoutine}
+            onSaveExercise={handleSaveExercise}
+            onSaveWorkout={saveWorkout}
+            onStartRest={startRest}
+            onDeleteLog={deleteLog}
+          />
+        )}
+
+        {tab === "activity" && (
+          <ActivityTab
+            logs={logs}
+            exercises={exercises}
+            streak={streak}
+            unitPref={unitPref}
+            onDeleteLog={deleteLog}
+            onUpdateLog={updateLog}
+          />
+        )}
+
+        {tab === "progress" && (
+          <ProgressHubTab
+            weeklyVolume={weeklyVolume}
+            volDelta={volDelta}
+            totalVolume={totalVolume}
+            totalSets={totalSets}
+            goals={goals}
+            records={records}
+            exercises={exercises}
+            weights={weights}
+            logs={logs}
+            unitPref={unitPref}
+            onAddGoal={addGoal}
+            onRemoveGoal={removeGoal}
+            onAddWeight={addWeight}
+          />
+        )}
+
+        {tab === "catalog" && (
+          <CatalogAndDataTab
+            exercises={exercises}
+            routines={routines}
+            logs={logs}
+            goals={goals}
+            weights={weights}
+            theme={theme}
+            unitPref={unitPref}
+            onSetTheme={setTheme}
+            onSetUnitPref={setUnitPref}
+            onSaveExercise={handleSaveExercise}
+            onToggleFavorite={handleToggleFavorite}
+            onSaveRoutine={handleSaveRoutine}
+            onDeleteRoutine={handleDeleteRoutine}
+            onDuplicateRoutine={handleDuplicateRoutine}
+            onStartRoutine={handleStartRoutine}
+            onExport={exportData}
+            onImport={importData}
+          />
+        )}
+      </main>
+
       {timer.duration > 0 && (
-        <RestTimerBar timer={timer} onToggle={toggleRest} onReset={resetRest} onDismiss={dismissRest} />
+        <RestTimerBar
+          timer={timer}
+          onToggle={toggleRest}
+          onReset={resetRest}
+          onDismiss={dismissRest}
+        />
       )}
-      <BottomNav tab={tab} sub={sub} onSelect={selectTab} />
+
+      <BottomNav tab={tab} onSelect={setTab} />
     </div>
   );
 }

@@ -17,31 +17,35 @@ export default function RestTimerBar({ timer, onToggle, onReset, onDismiss }) {
         <svg viewBox="0 0 36 36">
           <path
             className="restTrack"
-            d="M18 2 a16 16 0 0 1 0 32 a16 16 0 0 1 0 -32"
+            d="M18 2.5 a15.5 15.5 0 0 1 0 31 a15.5 15.5 0 0 1 0 -31"
           />
           <path
             className="restProgress"
             strokeDasharray={`${pct}, 100`}
-            d="M18 2 a16 16 0 0 1 0 32 a16 16 0 0 1 0 -32"
+            d="M18 2.5 a15.5 15.5 0 0 1 0 31 a15.5 15.5 0 0 1 0 -31"
           />
         </svg>
-        <span>{fmt(timer.remaining)}</span>
+        <span className="tabular">{fmt(timer.remaining)}</span>
       </div>
 
       <div className="restLabel">
-        <strong>Descanso</strong>
-        <small>{timer.running ? "en curso…" : "en pausa"}</small>
+        <strong>Temporizador</strong>
+        <small>{timer.running ? "Descanso en curso" : "En pausa"}</small>
       </div>
 
       <div className="restActions">
-        <button className="iconBtn" onClick={onToggle}>
-          {timer.running ? <Pause size={17} /> : <Play size={17} />}
+        <button
+          className={timer.running ? "iconBtn" : "iconBtn accent"}
+          onClick={onToggle}
+          aria-label={timer.running ? "Pausar" : "Reanudar"}
+        >
+          {timer.running ? <Pause size={16} /> : <Play size={16} />}
         </button>
-        <button className="iconBtn" onClick={onReset}>
-          <RotateCcw size={16} />
+        <button className="iconBtn" onClick={onReset} aria-label="Reiniciar">
+          <RotateCcw size={15} />
         </button>
-        <button className="iconBtn" onClick={onDismiss}>
-          <X size={17} />
+        <button className="iconBtn" onClick={onDismiss} aria-label="Cerrar">
+          <X size={16} />
         </button>
       </div>
     </div>
