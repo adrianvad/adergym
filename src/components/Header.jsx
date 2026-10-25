@@ -22,7 +22,7 @@ export default function Header({ sessionCount, theme, onToggleTheme }) {
           >
             <Dumbbell size={16} strokeWidth={2.5} />
           </div>
-          <span className="brandWordmark">IRON LOG</span>
+          <span className="brandWordmark">adergym</span>
         </div>
 
         <div className="row" style={{ gap: 8 }}>

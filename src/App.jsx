@@ -351,7 +351,7 @@ export default function App() {
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    a.download = `iron-log-backup-${isoToday()}.json`;
+    a.download = `adergym-backup-${isoToday()}.json`;
     a.click();
     URL.revokeObjectURL(a.href);
     notify("Copia exportada");

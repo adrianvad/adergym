@@ -14,8 +14,8 @@ export default defineConfig({
       registerType: "autoUpdate",
       includeAssets: ["icon.svg"],
       manifest: {
-        name: "IRON LOG",
-        short_name: "IRON LOG",
+        name: "adergym",
+        short_name: "adergym",
         description: "Tu tracker personal de gimnasio",
         lang: "es",
         theme_color: "#1e2024",
